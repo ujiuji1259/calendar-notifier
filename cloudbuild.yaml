@@ -1,0 +1,20 @@
+  steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'asia-northeast1-docker.pkg.dev/ujiie-notifier-prod/calendar-notifier/api', '.']
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'asia-northeast1-docker.pkg.dev/ujiie-notifier-prod/calendar-notifier/api']
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+    - 'run'
+    - 'deploy'
+    - 'calendar-notifier'
+    - '--image'
+    - 'asia-northeast1-docker.pkg.dev/ujiie-notifier-prod/calendar-notifier/api'
+    - '--region'
+    - 'asia-northeast1'
+  images:
+  - 'asia-northeast1-docker.pkg.dev/ujiie-notifier-prod/calendar-notifier/api'
