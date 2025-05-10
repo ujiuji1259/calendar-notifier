@@ -207,3 +207,65 @@ resource "google_project_iam_member" "bucket_iam_member" {
   role    = "roles/datastore.user"
   member  = "serviceAccount:${google_service_account.service_account.email}"
 }
+
+data "google_iam_policy" "serviceagent_secretAccessor" {
+    binding {
+        role = "roles/secretmanager.secretAccessor"
+        members = ["serviceAccount:service-547061469071@gcp-sa-cloudbuild.iam.gserviceaccount.com"]
+    }
+}
+
+resource "google_secret_manager_secret_iam_policy" "policy" {
+  project = local.project_id
+  secret_id = data.google_secret_manager_secret.github_token.secret_id
+  policy_data = data.google_iam_policy.serviceagent_secretAccessor.policy_data
+}
+
+// 前もってsecretを作っておくこと
+data "google_secret_manager_secret_version" "github_token" {
+  secret    = "github-token"
+  project   = local.project_id
+}
+
+// 前もってsecretを作っておくこと
+data "google_secret_manager_secret" "github_token" {
+  secret_id = "github-token"
+  project   = local.project_id
+}
+
+// Create the GitHub connection
+resource "google_cloudbuildv2_connection" "github_connection" {
+    project = local.project_id
+    location = local.region
+    name = "github-connection"
+
+    github_config {
+        app_installation_id = "66394021"
+        authorizer_credential {
+            oauth_token_secret_version = data.google_secret_manager_secret_version.github_token.id
+        }
+    }
+}
+
+resource "google_cloudbuildv2_repository" "my_repository" {
+    project = local.project_id
+    location = local.region
+    name = "calendar-notifier"
+    parent_connection = google_cloudbuildv2_connection.github_connection.name
+    remote_uri = "https://github.com/ujiuji1259/calendar-notifier.git"
+}
+
+resource "google_cloudbuild_trigger" "calendar_notifier_trigger" {
+  name     = "calendar-notifier-trigger"
+  project  = local.project_id
+  location = local.region
+
+  repository_event_config {
+    repository = google_cloudbuildv2_repository.my_repository.id
+    push {
+      branch = "main"
+    }
+  }
+  service_account = google_service_account.build_service_account.id
+  filename = "cloudbuild.yaml"
+}
