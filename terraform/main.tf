@@ -258,7 +258,10 @@ resource "google_cloudbuildv2_repository" "my_repository" {
 resource "google_cloudbuild_trigger" "calendar_notifier_trigger" {
   name     = "calendar-notifier-trigger"
   project  = local.project_id
-  location = local.region
+  # asia-northeast1ではtrigger時にquotaエラーになる
+  # globalにしないといけないが、terraformでglobalにするとエラーになる
+  # そのため、コンソールでglobalに手動修正する必要がある
+  location = "global"
 
   repository_event_config {
     repository = google_cloudbuildv2_repository.my_repository.id
