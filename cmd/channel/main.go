@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -54,10 +54,14 @@ func GetAccessToken() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("HTTPリクエストエラー: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Error closing response body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		responseBody, _ := ioutil.ReadAll(resp.Body)
+		responseBody, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("アクセストークン取得失敗: ステータスコード %d, レスポンス %s", resp.StatusCode, string(responseBody))
 	}
 
@@ -76,28 +80,46 @@ func main() {
 		"type":    "web_hook",
 		"address": watchAddress,
 	}
-	payload, _ := json.MarshalIndent(params, "", "    ")
+	payload, err := json.MarshalIndent(params, "", "    ")
+	if err != nil {
+		log.Fatalf("Failed to marshal params: %v", err)
+	}
 
 	accessToken, err := GetAccessToken()
-	req, _ := http.NewRequest(
+	if err != nil {
+		log.Fatalf("Failed to get access token: %v", err)
+	}
+
+	req, err := http.NewRequest(
 		"POST",
 		fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events/watch", url.QueryEscape(targetCalendarId)),
 		bytes.NewReader(payload),
 	)
+	if err != nil {
+		log.Fatalf("Failed to create request: %v", err)
+	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatalf("calendar api request error.: %s", err.Error())
+		log.Fatalf("Calendar API request error: %v", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("Error closing response body: %v", err)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("Failed to read response body: %v", err)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("calendar api request error.: %s", err.Error())
-	} else if resp.StatusCode != http.StatusOK {
-		log.Fatalf("calendar api request error.: %s", err.Error())
+	if resp.StatusCode != http.StatusOK {
+		log.Fatalf("Calendar API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
+
 	fmt.Println(string(body))
 }

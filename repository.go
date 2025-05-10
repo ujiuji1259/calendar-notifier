@@ -15,6 +15,7 @@ type SyncToken struct {
 type SyncTokenRepository interface {
 	Save(ctx context.Context, token string) error
 	Get(ctx context.Context) (string, error)
+	Close() error
 }
 
 type DatastoreSyncTokenRepository struct {
@@ -68,5 +69,8 @@ func (r *DatastoreSyncTokenRepository) Get(ctx context.Context) (string, error) 
 }
 
 func (r *DatastoreSyncTokenRepository) Close() error {
-	return r.client.Close()
-} 
+	if err := r.client.Close(); err != nil {
+		return fmt.Errorf("failed to close datastore client: %w", err)
+	}
+	return nil
+}

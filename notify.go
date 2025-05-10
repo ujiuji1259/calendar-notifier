@@ -1,12 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"bytes"
 
 	"google.golang.org/api/calendar/v3"
 )
@@ -60,4 +60,4 @@ func (d DiscordEventNotifier) SendEvents(events []*calendar.Event) error {
 		}
 	}
 	return nil
-} 
+}

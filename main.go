@@ -10,7 +10,7 @@ import (
 
 type CalendarNotifier struct {
 	repository *DatastoreSyncTokenRepository
-	srv		   *calendar.Service
+	srv        *calendar.Service
 	notifier   *DiscordEventNotifier
 }
 
@@ -31,8 +31,8 @@ func NewCalendarNotifier() (*CalendarNotifier, error) {
 
 	return &CalendarNotifier{
 		repository: repository,
-		srv: srv,
-		notifier: notifier,
+		srv:        srv,
+		notifier:   notifier,
 	}, nil
 }
 
@@ -100,13 +100,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer notifier.repository.Close()
+	defer func() {
+		if err := notifier.repository.Close(); err != nil {
+			log.Printf("Error closing repository: %v", err)
+		}
+	}()
 
 	server := http.Server{
 		Addr:    ":8080",
 		Handler: nil,
 	}
-	http.HandleFunc("/watch/v2", func (w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/watch/v2", func(w http.ResponseWriter, r *http.Request) {
 		var state, ok = r.Header["X-Goog-Resource-State"]
 		if !ok || state[0] != "exists" {
 			return
@@ -118,5 +122,8 @@ func main() {
 		}
 	})
 
-	server.ListenAndServe()
+	err = server.ListenAndServe()
+	if err != nil {
+		log.Fatal(err)
+	}
 }

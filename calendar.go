@@ -1,13 +1,13 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"net/http"
 	"bytes"
-	"io/ioutil"
-	"os"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
 
 	"golang.org/x/oauth2"
 	"google.golang.org/api/calendar/v3"
@@ -54,10 +54,14 @@ func GetAccessToken() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("HTTPリクエストエラー: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			fmt.Printf("Error closing response body: %v\n", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
-		responseBody, _ := ioutil.ReadAll(resp.Body)
+		responseBody, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("アクセストークン取得失敗: ステータスコード %d, レスポンス %s", resp.StatusCode, string(responseBody))
 	}
 
@@ -85,4 +89,4 @@ func NewCalendarService() (*calendar.Service, error) {
 		return nil, err
 	}
 	return srv, nil
-} 
+}
