@@ -298,7 +298,7 @@ func main() {
 		Addr:    ":8080",
 		Handler: nil,
 	}
-	http.HandleFunc("/watch", func (w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/watch/v2", func (w http.ResponseWriter, r *http.Request) {
 		var state, ok = r.Header["X-Goog-Resource-State"]
 		if !ok || state[0] != "exists" {
 			return

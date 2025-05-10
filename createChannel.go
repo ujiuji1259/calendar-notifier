@@ -15,7 +15,7 @@ import (
 
 const targetCalendarId = "family13253019517568372730@group.calendar.google.com"
 const TokenEndpoint = "https://oauth2.googleapis.com/token"
-const watchAddress = "https://calendar-notifier-547061469071.asia-northeast1.run.app/watch"
+const watchAddress = "https://calendar-notifier-547061469071.asia-northeast1.run.app/watch/v2"
 
 // AccessTokenResponse GoogleのトークンAPIレスポンス
 type AccessTokenResponse struct {
