@@ -18,3 +18,5 @@
     - 'asia-northeast1'
   images:
   - 'asia-northeast1-docker.pkg.dev/ujiie-notifier-prod/calendar-notifier/api'
+  serviceAccount: projects/ujiie-notifier-prod/serviceAccounts/build-google-calendar-notifier@ujiie-notifier-prod.iam.gserviceaccount.com
+  logsBucket: 'gs://build-logs-calendar-notifier'

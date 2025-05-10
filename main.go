@@ -1,16 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
+	"net/http"
+	"bytes"
+	"io/ioutil"
 
-	"cloud.google.com/go/storage"
+	"cloud.google.com/go/datastore"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
@@ -18,8 +18,6 @@ import (
 
 const TokenEndpoint = "https://oauth2.googleapis.com/token"
 const TargetCalendarId = "family13253019517568372730@group.calendar.google.com"
-const bucketName = "calendar-notifier"
-const objectName = "nextsynctoken.txt"
 
 // AccessTokenResponse GoogleのトークンAPIレスポンス
 type AccessTokenResponse struct {
@@ -27,54 +25,6 @@ type AccessTokenResponse struct {
 	ExpiresIn   int    `json:"expires_in"`
 	TokenType   string `json:"token_type"`
 	Scope       string `json:"scope"`
-}
-
-type BucketManager struct {
-	client *storage.Client
-}
-
-func NewBucketManager() (*BucketManager, error) {
-	ctx := context.Background()
-	client, err := storage.NewClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &BucketManager{
-		client: client,
-	}, nil
-}
-
-func (b BucketManager) WriteTextObject(bucketName, objectName, content string) error {
-	ctx := context.Background()
-	bucket := b.client.Bucket(bucketName)
-
-	w := bucket.Object(objectName).NewWriter(ctx)
-	_, err := w.Write([]byte(content))
-	if err != nil {
-		w.Close()
-		return err
-	}
-
-	// このチェックを忘れずに！
-	if err := w.Close(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (b BucketManager) ReadTextObject(bucketName, objectName string) (string, error) {
-	ctx := context.Background()
-	bucket := b.client.Bucket(bucketName)
-	rc, err := bucket.Object(objectName).NewReader(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer rc.Close()
-	slurp, err := ioutil.ReadAll(rc)
-	if err != nil {
-		return "", err
-	}
-	return string(slurp), nil
 }
 
 // GetAccessToken リフレッシュトークンを使ってアクセストークンを取得
@@ -121,22 +71,7 @@ func GetAccessToken() (string, error) {
 	return tokenResp.AccessToken, nil
 }
 
-type CalendarNotifier struct {
-	bucketManager *BucketManager
-	srv		   *calendar.Service
-	discordMessanger *DiscordMessanger
-}
-
-func NewCalendarNotifier() (*CalendarNotifier, error) {
-	bucketManager, err := NewBucketManager()
-	if err != nil {
-		return nil, err
-	}
-	discordMessanger, err := NewDiscordMessanger()
-	if err != nil {
-		return nil, err
-	}
-
+func NewCalendarService() (*calendar.Service, error) {
 	accessToken, err := GetAccessToken()
 	if err != nil {
 		return nil, err
@@ -151,10 +86,94 @@ func NewCalendarNotifier() (*CalendarNotifier, error) {
 	if err != nil {
 		return nil, err
 	}
+	return srv, nil
+}
+
+type SyncToken struct {
+	Value string
+}
+
+type SyncTokenRepository interface {
+	Save(ctx context.Context, token string) error
+	Get(ctx context.Context) (string, error)
+}
+
+type DatastoreSyncTokenRepository struct {
+	client *datastore.Client
+}
+
+func NewDatastoreSyncTokenRepository(ctx context.Context) (*DatastoreSyncTokenRepository, error) {
+	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if projectID == "" {
+		return nil, fmt.Errorf("GOOGLE_CLOUD_PROJECT environment variable is not set")
+	}
+
+	databaseID := os.Getenv("GOOGLE_CLOUD_DATABASE")
+	if databaseID == "" {
+		return nil, fmt.Errorf("GOOGLE_CLOUD_DATABASE environment variable is not set")
+	}
+
+	client, err := datastore.NewClientWithDatabase(ctx, projectID, databaseID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create datastore client: %w", err)
+	}
+
+	return &DatastoreSyncTokenRepository{
+		client: client,
+	}, nil
+}
+
+func (r *DatastoreSyncTokenRepository) Save(ctx context.Context, token string) error {
+	k := datastore.NameKey("Token", "SyncToken", nil)
+	e := &SyncToken{
+		Value: token,
+	}
+
+	if _, err := r.client.Put(ctx, k, e); err != nil {
+		return fmt.Errorf("failed to save sync token: %w", err)
+	}
+	return nil
+}
+
+func (r *DatastoreSyncTokenRepository) Get(ctx context.Context) (string, error) {
+	k := datastore.NameKey("Token", "SyncToken", nil)
+	e := &SyncToken{}
+
+	if err := r.client.Get(ctx, k, e); err != nil {
+		if err == datastore.ErrNoSuchEntity {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get sync token: %w", err)
+	}
+	return e.Value, nil
+}
+
+
+type CalendarNotifier struct {
+	repository *DatastoreSyncTokenRepository
+	srv		   *calendar.Service
+	notifier   *DiscordEventNotifier
+}
+
+func NewCalendarNotifier() (*CalendarNotifier, error) {
+	ctx := context.Background()
+	repository, err := NewDatastoreSyncTokenRepository(ctx)
+	if err != nil {
+		return nil, err
+	}
+	srv, err := NewCalendarService()
+	if err != nil {
+		return nil, err
+	}
+	notifier, err := NewDiscordEventNotifier()
+	if err != nil {
+		return nil, err
+	}
+
 	return &CalendarNotifier{
-		bucketManager: bucketManager,
+		repository: repository,
 		srv: srv,
-		discordMessanger: discordMessanger,
+		notifier: notifier,
 	}, nil
 }
 
@@ -164,7 +183,8 @@ func (c CalendarNotifier) GetEventsToNotify() ([]*calendar.Event, error) {
 	var pageToken *string = nil
 	var syncToken *string = nil
 
-	text, err := c.bucketManager.ReadTextObject(bucketName, objectName)
+	ctx := context.Background()
+	text, err := c.repository.Get(ctx)
 	if err == nil {
 		log.Println("NextSyncToken loaded.")
 		syncToken = &text
@@ -186,7 +206,7 @@ func (c CalendarNotifier) GetEventsToNotify() ([]*calendar.Event, error) {
 
 		allEvents = append(allEvents, events.Items...)
 		if events.NextPageToken == "" {
-			err = c.bucketManager.WriteTextObject(bucketName, objectName, events.NextSyncToken)
+			err = c.repository.Save(ctx, events.NextSyncToken)
 			if err != nil {
 				return nil, err
 			}
@@ -199,35 +219,51 @@ func (c CalendarNotifier) GetEventsToNotify() ([]*calendar.Event, error) {
 	return allEvents, nil
 }
 
-func (c CalendarNotifier) NotifyEvent(event calendar.Event) error {
-	if event.Status != "confirmed" {
-		return nil
+func (c CalendarNotifier) NotifyEvents() error {
+	events, err := c.GetEventsToNotify()
+	if err != nil {
+		return err
+	}
+	eventsToNotify := []*calendar.Event{}
+
+	for _, event := range events {
+		if event.Status != "confirmed" {
+			continue
+		}
+		eventsToNotify = append(eventsToNotify, event)
 	}
 
-	message := fmt.Sprintf("以下の予定が追加されました\n\nイベント: %s\n開始: %s\n終了: %s\n場所: %s\n説明: %s", event.Summary, event.Start.DateTime, event.End.DateTime, event.Location, event.Description)
-	log.Println("message: ", message)
-	err := c.discordMessanger.SendMessage(message)
-	return err
+	return c.notifier.SendEvents(eventsToNotify)
 }
 
+type EventNotifier interface {
+	SendEvents(events []*calendar.Event) error
+}
 
-type DiscordMessanger struct {
+type DiscordEventNotifier struct {
 	webhookURL string
 }
 
-func NewDiscordMessanger() (*DiscordMessanger, error) {
+func NewDiscordEventNotifier() (*DiscordEventNotifier, error) {
 	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
 	if webhookURL == "" {
 		return nil, fmt.Errorf("環境変数 DISCORD_WEBHOOK_URL が設定されていません")
 	}
-	return &DiscordMessanger{
+	return &DiscordEventNotifier{
 		webhookURL: webhookURL,
 	}, nil
 }
 
-func (d DiscordMessanger) SendMessage(pushMessage string) error {
+func (d DiscordEventNotifier) MakeMessage(event *calendar.Event) string {
+	message := fmt.Sprintf("以下の予定が追加されました\n\nイベント: %s\n開始: %s\n終了: %s\n場所: %s\n説明: %s", event.Summary, event.Start.DateTime, event.End.DateTime, event.Location, event.Description)
+	log.Println("message: ", message)
+	return message
+}
+
+func (d DiscordEventNotifier) SendEvent(event *calendar.Event) error {
+	message := d.MakeMessage(event)
 	payload := map[string]string{
-		"content": pushMessage,
+		"content": message,
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest("POST", d.webhookURL, bytes.NewBuffer(body))
@@ -238,37 +274,41 @@ func (d DiscordMessanger) SendMessage(pushMessage string) error {
 
 	client := &http.Client{}
 	_, err = client.Do(req)
-	if err != nil {
-		return err
+	return err
+}
+
+func (d DiscordEventNotifier) SendEvents(events []*calendar.Event) error {
+	for _, event := range events {
+		err := d.SendEvent(event)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func main() {
-	calendarNotifier, err := NewCalendarNotifier()
+	notifier, err := NewCalendarNotifier()
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer notifier.repository.client.Close()
+
 	server := http.Server{
 		Addr:    ":8080",
 		Handler: nil,
 	}
-	http.HandleFunc("/calendar/watch", func (w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/watch", func (w http.ResponseWriter, r *http.Request) {
 		var state, ok = r.Header["X-Goog-Resource-State"]
 		if !ok || state[0] != "exists" {
 			return
 		}
 
-		eventsToNotify, err := calendarNotifier.GetEventsToNotify()
+		err = notifier.NotifyEvents()
 		if err != nil {
 			log.Fatal(err)
 		}
-		for _, event := range eventsToNotify {
-			err := calendarNotifier.NotifyEvent(*event)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
 	})
+
 	server.ListenAndServe()
 }
