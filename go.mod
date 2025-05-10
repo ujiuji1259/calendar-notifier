@@ -1,4 +1,4 @@
-module calendar-notifier
+module github.com/ujiuji1259/calendar-notifier
 
 go 1.21.6
 
