@@ -7,10 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 
-	"github.com/satori/go.uuid"
 )
 
 const targetCalendarId = "family13253019517568372730@group.calendar.google.com"
@@ -76,12 +74,8 @@ func GetAccessToken() (string, error) {
 func main() {
 	type m map[string]interface{}
 	params := m{
-		"id":      uuid.NewV4().String(),
-		"type":    "web_hook",
-		"address": watchAddress,
-		"params": m{
-			"ttl": "604800000",
-		},
+		"id":      "6319f589-0879-4ccb-959b-57e6f1b8bdc3",
+		"resourceId": "bEdcxKJeZx3krd0K3pgK-qOJjX8",
 	}
 	payload, err := json.MarshalIndent(params, "", "    ")
 	if err != nil {
@@ -95,7 +89,7 @@ func main() {
 
 	req, err := http.NewRequest(
 		"POST",
-		fmt.Sprintf("https://www.googleapis.com/calendar/v3/calendars/%s/events/watch", url.QueryEscape(targetCalendarId)),
+		"https://www.googleapis.com/calendar/v3/channels/stop",
 		bytes.NewReader(payload),
 	)
 	if err != nil {
